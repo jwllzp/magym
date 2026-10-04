@@ -1,5 +1,5 @@
 # magym
-An agentic tool to help bussy adult minds to get back to a game they love.
+An agentic tool to help busy adult minds get back to a game they love.
 
 ## Pilars
 1. **Deck building**: specify the kind of deck and format you want to play, an agent will build it for you.
