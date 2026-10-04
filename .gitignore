@@ -23,10 +23,14 @@ rustc-ice-*.txt
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-
 # Added by cargo
 
 /target
 
 # Downloaded card data
 /data
+
+# Comprehensive Rules: copyrighted, not redistributable. Downloaded and split
+# locally by the `setup` skill, which deletes docs/rules.txt when it's done.
+docs/rules.txt
+docs/rules/
