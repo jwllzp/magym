@@ -36,7 +36,7 @@ pub fn card_file_name(card: &Card) -> String {
 
 /// Lowercase ASCII letters and digits, with every other run of characters
 /// collapsed to a single `-`.
-fn slug(s: &str) -> String {
+pub(crate) fn slug(s: &str) -> String {
     let mut out = String::new();
     for c in s.chars() {
         if c.is_ascii_alphanumeric() {
@@ -89,33 +89,8 @@ fn toml_files(dir: &Path) -> Result<Vec<PathBuf>, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::card::{Ability, Keyword, parse_abilities};
-
-    fn card(name: &str, collector_number: &str, cost: &str, type_line: &str, text: &str) -> Card {
-        let type_line: crate::card::TypeLine = type_line.parse().unwrap();
-        let mana_cost: crate::card::ManaCost = cost.parse().unwrap();
-        let creature = type_line.is(crate::card::CardType::Creature);
-        Card {
-            name: name.into(),
-            mana_value: mana_cost.mana_value(),
-            colors: mana_cost.colors(),
-            color_identity: mana_cost.colors(),
-            abilities: parse_abilities(text, type_line.is_instant_or_sorcery()),
-            mana_cost,
-            type_line,
-            power: creature.then(|| "2".parse().unwrap()),
-            toughness: creature.then(|| "1+*".parse().unwrap()),
-            loyalty: None,
-            defense: None,
-            rarity: crate::card::Rarity::Uncommon,
-            set: "tst".into(),
-            collector_number: collector_number.into(),
-            id: "00000000-0000-0000-0000-000000000001".into(),
-            oracle_id: "00000000-0000-0000-0000-000000000002".into(),
-            image_url: None,
-            oracle_text: text.into(),
-        }
-    }
+    use crate::card::testing::card;
+    use crate::card::{Ability, Keyword};
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("magym-store-{name}-{}", std::process::id()));

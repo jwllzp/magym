@@ -34,3 +34,6 @@ rustc-ice-*.txt
 # locally by the `setup` skill, which deletes docs/rules.txt when it's done.
 docs/rules.txt
 docs/rules/
+
+# Saved decks (reference cards in /data)
+/decks
