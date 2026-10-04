@@ -1,5 +1,7 @@
 mod ability;
 mod mana;
+#[cfg(test)]
+pub(crate) mod testing;
 mod types;
 
 pub use ability::{Ability, Keyword, parse_abilities};
