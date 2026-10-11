@@ -7,7 +7,10 @@ use std::time::Duration;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::card::{Card, CardType, Color, ManaCost, Rarity, Stat, TypeLine, parse_abilities};
+use crate::card::{
+    Ability, BackFace, Card, CardType, Color, DoubleFaced, ManaCost, Rarity, Stat, TypeLine,
+    parse_abilities,
+};
 use crate::error::Error;
 
 /// Set code of Reality Fracture.
@@ -23,8 +26,27 @@ const REQUEST_DELAY: Duration = Duration::from_millis(100);
 struct ScryfallCard {
     id: String,
     oracle_id: Option<String>,
+    /// For a multi-faced card, both names, e.g. `"Front // Back"`.
     name: String,
     layout: String,
+    /// A single-faced card's characteristics. Multi-faced cards have theirs
+    /// in `card_faces` instead.
+    #[serde(flatten)]
+    face: ScryfallFace,
+    #[serde(default)]
+    color_identity: Vec<String>,
+    rarity: String,
+    set: String,
+    collector_number: String,
+    /// Kept raw, because faces of unsupported layouts may not have the shape
+    /// of [`ScryfallFace`] and mustn't fail the whole page.
+    card_faces: Option<Vec<serde_json::Value>>,
+}
+
+/// The characteristics of one face (https://scryfall.com/docs/api/cards#card-face-objects).
+#[derive(Debug, Default, Deserialize)]
+struct ScryfallFace {
+    name: Option<String>,
     mana_cost: Option<String>,
     type_line: Option<String>,
     oracle_text: Option<String>,
@@ -33,13 +55,7 @@ struct ScryfallCard {
     loyalty: Option<String>,
     defense: Option<String>,
     colors: Option<Vec<String>>,
-    #[serde(default)]
-    color_identity: Vec<String>,
-    rarity: String,
-    set: String,
-    collector_number: String,
     image_uris: Option<ImageUris>,
-    card_faces: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,25 +81,35 @@ fn parse_colors(colors: &[String]) -> Result<Vec<Color>, Error> {
     Ok(colors)
 }
 
-impl TryFrom<ScryfallCard> for Card {
+/// A face's characteristics, converted and checked.
+struct Face {
+    name: String,
+    mana_cost: ManaCost,
+    type_line: TypeLine,
+    colors: Vec<Color>,
+    power: Option<Stat>,
+    toughness: Option<Stat>,
+    loyalty: Option<Stat>,
+    defense: Option<Stat>,
+    image_url: Option<String>,
+    oracle_text: String,
+    abilities: Vec<Ability>,
+}
+
+impl TryFrom<ScryfallFace> for Face {
     type Error = Error;
 
-    fn try_from(c: ScryfallCard) -> Result<Self, Self::Error> {
-        // Only single-faced cards are modeled for now.
-        if c.layout != "normal" || c.card_faces.is_some() {
-            return Err(Error::Unsupported(c.layout));
-        }
-
-        let type_line: TypeLine = c
+    fn try_from(f: ScryfallFace) -> Result<Self, Self::Error> {
+        let type_line: TypeLine = f
             .type_line
             .as_deref()
             .ok_or(Error::MissingField("type_line"))?
             .parse()?;
-        let mana_cost: ManaCost = c.mana_cost.as_deref().unwrap_or("").parse()?;
-        let oracle_text = c.oracle_text.unwrap_or_default();
+        let mana_cost: ManaCost = f.mana_cost.as_deref().unwrap_or("").parse()?;
+        let oracle_text = f.oracle_text.unwrap_or_default();
         let stat = |s: Option<String>| s.map(|s| s.parse::<Stat>().unwrap_or_else(|e| match e {}));
-        let (power, toughness) = (stat(c.power), stat(c.toughness));
-        let (loyalty, defense) = (stat(c.loyalty), stat(c.defense));
+        let (power, toughness) = (stat(f.power), stat(f.toughness));
+        let (loyalty, defense) = (stat(f.loyalty), stat(f.defense));
 
         // CR 208.1, 209.1, 310.4a: these card types always print these numbers.
         if type_line.is(CardType::Creature) && (power.is_none() || toughness.is_none()) {
@@ -96,30 +122,112 @@ impl TryFrom<ScryfallCard> for Card {
             return Err(Error::MissingField("defense"));
         }
 
-        let colors = match &c.colors {
+        let colors = match &f.colors {
             Some(colors) => parse_colors(colors)?,
             None => mana_cost.colors(),
         };
 
-        Ok(Card {
-            oracle_id: c.oracle_id.ok_or(Error::MissingField("oracle_id"))?,
-            id: c.id,
-            name: c.name,
-            mana_value: mana_cost.mana_value(),
+        Ok(Face {
+            name: f.name.ok_or(Error::MissingField("name"))?,
             abilities: parse_abilities(&oracle_text, type_line.is_instant_or_sorcery()),
             mana_cost,
             type_line,
-            oracle_text,
+            colors,
             power,
             toughness,
             loyalty,
             defense,
-            colors,
-            color_identity: parse_colors(&c.color_identity)?,
+            image_url: f.image_uris.and_then(|i| i.normal),
+            oracle_text,
+        })
+    }
+}
+
+impl TryFrom<ScryfallCard> for Card {
+    type Error = Error;
+
+    fn try_from(c: ScryfallCard) -> Result<Self, Self::Error> {
+        let kind = match c.layout.as_str() {
+            "normal" if c.card_faces.is_none() => None,
+            "transform" => Some(DoubleFaced::Nonmodal),
+            "modal_dfc" => Some(DoubleFaced::Modal),
+            // Meld, split, flip, adventure, prepare, … aren't modeled yet.
+            _ => return Err(Error::Unsupported(c.layout)),
+        };
+
+        let (front, back) = match kind {
+            None => {
+                let face = ScryfallFace {
+                    name: Some(c.name),
+                    ..c.face
+                };
+                (Face::try_from(face)?, None)
+            }
+            Some(kind) => {
+                let faces = c.card_faces.ok_or(Error::MissingField("card_faces"))?;
+                let [front, back]: [serde_json::Value; 2] = faces
+                    .try_into()
+                    .map_err(|_| Error::MissingField("card_faces"))?;
+                let front = Face::try_from(serde_json::from_value::<ScryfallFace>(front)?)?;
+                let back = Face::try_from(serde_json::from_value::<ScryfallFace>(back)?)?;
+                (front, Some((kind, back)))
+            }
+        };
+
+        let mana_value = front.mana_cost.mana_value();
+        // CR 903.4d: the back face counts toward color identity.
+        let mut color_identity = parse_colors(&c.color_identity)?;
+        if let Some((_, back)) = &back {
+            for color in &back.colors {
+                if !color_identity.contains(color) {
+                    color_identity.push(*color);
+                }
+            }
+            color_identity.sort();
+        }
+
+        let back_face = back.map(|(kind, b)| BackFace {
+            kind,
+            mana_value: match kind {
+                // CR 202.3b, 712.8e
+                DoubleFaced::Nonmodal => mana_value,
+                // CR 712.8f
+                DoubleFaced::Modal => b.mana_cost.mana_value(),
+            },
+            name: b.name,
+            mana_cost: b.mana_cost,
+            type_line: b.type_line,
+            colors: b.colors,
+            power: b.power,
+            toughness: b.toughness,
+            loyalty: b.loyalty,
+            defense: b.defense,
+            image_url: b.image_url,
+            oracle_text: b.oracle_text,
+            abilities: b.abilities,
+        });
+
+        Ok(Card {
+            oracle_id: c.oracle_id.ok_or(Error::MissingField("oracle_id"))?,
+            id: c.id,
+            // CR 712.8a: outside the game, only the front face's characteristics.
+            name: front.name,
+            mana_value,
+            abilities: front.abilities,
+            mana_cost: front.mana_cost,
+            type_line: front.type_line,
+            oracle_text: front.oracle_text,
+            power: front.power,
+            toughness: front.toughness,
+            loyalty: front.loyalty,
+            defense: front.defense,
+            colors: front.colors,
+            color_identity,
             rarity: c.rarity.parse::<Rarity>()?,
             set: c.set,
             collector_number: c.collector_number,
-            image_url: c.image_uris.and_then(|i| i.normal),
+            image_url: front.image_url,
+            back_face,
         })
     }
 }
@@ -243,7 +351,7 @@ pub fn fetch_reality_fracture() -> Result<FetchReport, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::card::{Ability, Keyword, ManaSymbol, Supertype};
+    use crate::card::{Keyword, ManaSymbol, Supertype};
     use serde_json::json;
 
     /// Builds a Scryfall card object (see https://scryfall.com/docs/api/cards)
@@ -415,14 +523,161 @@ mod tests {
         assert_eq!(card.colors, vec![Color::White, Color::Blue]);
     }
 
-    // Multi-faced cards (CR 709–712) are out of scope.
+    /// Delver of Secrets // Insectile Aberration as Scryfall returns it: no
+    /// top-level characteristics, one object per face.
+    fn delver() -> serde_json::Value {
+        json!({
+            "name": "Delver of Secrets // Insectile Aberration", "layout": "transform",
+            "color_identity": ["U"],
+            "card_faces": [
+                {
+                    "object": "card_face", "name": "Delver of Secrets", "mana_cost": "{U}",
+                    "type_line": "Creature — Human Wizard",
+                    "oracle_text": "At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform this creature.",
+                    "colors": ["U"], "power": "1", "toughness": "1",
+                    "image_uris": { "normal": "https://example.com/front.jpg" },
+                },
+                {
+                    "object": "card_face", "name": "Insectile Aberration", "mana_cost": "",
+                    "type_line": "Creature — Human Insect", "oracle_text": "Flying",
+                    "colors": ["U"], "color_indicator": ["U"], "power": "3", "toughness": "2",
+                    "image_uris": { "normal": "https://example.com/back.jpg" },
+                },
+            ],
+        })
+    }
+
+    // CR 712.2, 712.8a: outside the game, a nonmodal double-faced card has
+    // only its front face's characteristics.
     #[test]
-    fn multi_faced_cards_are_unsupported() {
+    fn nonmodal_double_faced_front_face() {
+        let card = convert(delver()).unwrap();
+        assert_eq!(card.name, "Delver of Secrets");
+        assert_eq!(card.mana_value, 1);
+        assert_eq!(card.power, Some(Stat::Fixed(1)));
+        assert!(!card.has_keyword(&Keyword::Flying));
+        assert!(matches!(
+            card.abilities.as_slice(),
+            [Ability::Triggered { .. }]
+        ));
+        assert_eq!(
+            card.image_url.as_deref(),
+            Some("https://example.com/front.jpg")
+        );
+    }
+
+    // CR 712.8: the back face has its own characteristics. CR 202.3b, 712.8e:
+    // its mana value is the front face's, though it has no mana cost.
+    // CR 204: its color comes from its color indicator.
+    #[test]
+    fn nonmodal_double_faced_back_face() {
+        let back = convert(delver()).unwrap().back_face.unwrap();
+        assert_eq!(back.kind, DoubleFaced::Nonmodal);
+        assert_eq!(back.name, "Insectile Aberration");
+        assert!(back.mana_cost.is_empty());
+        assert_eq!(back.mana_value, 1);
+        assert_eq!(back.colors, vec![Color::Blue]);
+        assert_eq!(back.power, Some(Stat::Fixed(3)));
+        assert_eq!(back.toughness, Some(Stat::Fixed(2)));
+        assert!(back.type_line.is(CardType::Creature));
+        assert!(matches!(
+            back.abilities.as_slice(),
+            [Ability::Keyword {
+                keyword: Keyword::Flying,
+                ..
+            }]
+        ));
+        assert_eq!(
+            back.image_url.as_deref(),
+            Some("https://example.com/back.jpg")
+        );
+    }
+
+    // CR 712.3, 712.8f: each face of a modal double-faced card is independent;
+    // a back face with no mana cost has mana value 0 (CR 202.3a). CR 202.3e:
+    // X is 0 for the front face.
+    #[test]
+    fn modal_double_faced() {
         let card = convert(json!({
-            "name": "Front // Back", "layout": "transform", "type_line": "Creature — Human // Creature — Werewolf",
-            "card_faces": [{ "name": "Front" }, { "name": "Back" }],
+            "name": "Shatterskull Smashing // Shatterskull, the Hammer Pass", "layout": "modal_dfc",
+            "color_identity": ["R"],
+            "card_faces": [
+                {
+                    "name": "Shatterskull Smashing", "mana_cost": "{X}{R}{R}", "type_line": "Sorcery",
+                    "oracle_text": "Shatterskull Smashing deals X damage divided as you choose among up to two target creatures and/or planeswalkers. If X is 6 or more, Shatterskull Smashing deals twice X damage divided as you choose among them instead.",
+                    "colors": ["R"],
+                },
+                {
+                    "name": "Shatterskull, the Hammer Pass", "mana_cost": "", "type_line": "Land",
+                    "oracle_text": "As Shatterskull, the Hammer Pass enters, you may pay 3 life. If you don't, it enters tapped.\n{T}: Add {R}.",
+                    "colors": [],
+                },
+            ],
+        }))
+        .unwrap();
+        assert_eq!(card.name, "Shatterskull Smashing");
+        assert!(card.is(CardType::Sorcery));
+        assert_eq!(card.mana_value, 2);
+        assert_eq!(card.colors, vec![Color::Red]);
+
+        let back = card.back_face.unwrap();
+        assert_eq!(back.kind, DoubleFaced::Modal);
+        assert!(back.type_line.is(CardType::Land));
+        assert_eq!(back.mana_value, 0);
+        assert!(back.colors.is_empty());
+    }
+
+    // CR 903.4d: the back face is included in color identity, an exception to
+    // CR 712.8a.
+    #[test]
+    fn back_face_color_counts_toward_color_identity() {
+        let mut fields = delver();
+        fields["color_identity"] = json!([]);
+        fields["card_faces"][1]["colors"] = json!(["B"]);
+        let card = convert(fields).unwrap();
+        assert_eq!(card.colors, vec![Color::Blue]);
+        assert_eq!(card.color_identity, vec![Color::Black]);
+    }
+
+    // CR 208.1: a creature back face must print power and toughness too.
+    #[test]
+    fn back_face_missing_printed_numbers() {
+        let mut fields = delver();
+        fields["card_faces"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("power");
+        assert!(matches!(
+            convert(fields),
+            Err(Error::MissingField("power/toughness"))
+        ));
+    }
+
+    // CR 712.1: a double-faced card has exactly two faces.
+    #[test]
+    fn double_faced_needs_two_faces() {
+        let mut fields = delver();
+        fields["card_faces"].as_array_mut().unwrap().pop();
+        assert!(matches!(
+            convert(fields),
+            Err(Error::MissingField("card_faces"))
+        ));
+    }
+
+    // Meld cards (CR 712.4) and other multi-part cards, such as adventurers
+    // (CR 715), aren't modeled yet.
+    #[test]
+    fn other_multi_part_cards_are_unsupported() {
+        let adventure = convert(json!({
+            "name": "Bonecrusher Giant // Stomp", "layout": "adventure",
+            "card_faces": [{ "name": "Bonecrusher Giant" }, { "name": "Stomp" }],
         }));
-        assert!(matches!(card, Err(Error::Unsupported(layout)) if layout == "transform"));
+        assert!(matches!(adventure, Err(Error::Unsupported(layout)) if layout == "adventure"));
+        let meld = convert(json!({
+            "name": "Graf Rats", "layout": "meld", "mana_cost": "{1}{B}",
+            "type_line": "Creature — Rat", "power": "2", "toughness": "1",
+        }));
+        assert!(matches!(meld, Err(Error::Unsupported(layout)) if layout == "meld"));
     }
 
     #[test]
