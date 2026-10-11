@@ -1,0 +1,20 @@
+# Choose one —
+# • Fulminous Forte deals 1 damage to each creature and planeswalker your
+#   opponents control.
+# • Fulminous Forte deals 5 damage to target creature or planeswalker.
+#
+# Planeswalkers aren't supported yet, so only creatures are affected.
+name = "Fulminous Forte"
+
+[spell]
+effect = "choose_one"
+
+[[spell.modes]]
+effect = "deal_damage"
+amount = 1
+target = { each = "creature", controller = "opponent" }
+
+[[spell.modes]]
+effect = "deal_damage"
+amount = 5
+target = { kind = "creature" }

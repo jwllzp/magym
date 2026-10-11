@@ -17,3 +17,30 @@ After cloning, run the `setup` skill (`/setup` in Claude Code). It asks for a UR
 plain-text (`.txt`) Magic: The Gathering Comprehensive Rules, downloads them, and splits
 them into small files under `docs/rules/`. That directory is gitignored, because the rules
 are copyrighted and aren't redistributed here.
+
+## Game engine
+
+`src/game/` plays two-player games by the Comprehensive Rules: turn structure, priority and
+the stack, combat, state-based actions, and triggered and activated abilities. The engine
+stops whenever a player has to decide something; callers ask for the pending decision and
+its legal actions, then apply one.
+
+Cards are data. Evergreen keywords (flying, trample, deathtouch, …) are built in; anything
+else a card does is described by a script in `scripts/`, one TOML file per card, written
+with the effect DSL documented in `src/game/effect.rs` and `src/game/script.rs`:
+
+```toml
+# scripts/last-gasp.toml
+name = "Last Gasp"
+
+[spell]
+effect = "pump"
+target = { kind = "creature" }
+power = -3
+toughness = -3
+```
+
+```sh
+cargo run -- playable fra                       # which downloaded cards the engine can play
+cargo run -- play DECK DECK --seed 42           # a game between two random players
+```

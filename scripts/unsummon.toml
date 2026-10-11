@@ -1,0 +1,6 @@
+# Return target creature to its owner's hand.
+name = "Unsummon"
+
+[spell]
+effect = "return_to_hand"
+target = { kind = "creature" }

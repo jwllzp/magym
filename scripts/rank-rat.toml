@@ -1,0 +1,7 @@
+# When this creature enters, each opponent discards a card.
+name = "Rank Rat"
+
+[[triggered]]
+on = { event = "enters", object = "self" }
+effect = "discard"
+player = "each_opponent"

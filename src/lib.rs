@@ -1,6 +1,7 @@
 pub mod card;
 pub mod deck;
 pub mod error;
+pub mod game;
 pub mod pool;
 pub mod scryfall;
 pub mod store;

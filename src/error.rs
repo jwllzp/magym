@@ -36,6 +36,11 @@ pub enum Error {
         path: std::path::PathBuf,
         source: toml::de::Error,
     },
+    #[error("{}: {source}", path.display())]
+    ScriptFile {
+        path: std::path::PathBuf,
+        source: toml::de::Error,
+    },
     #[error("no deck named {0:?}")]
     DeckNotFound(String),
     #[error("invalid deck name {0:?}: it needs at least one letter or digit")]

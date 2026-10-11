@@ -1,0 +1,17 @@
+# Flying
+# Whenever this creature attacks, it deals 1 damage to each opponent and you
+# gain 1 life.
+name = "Screeching Soulbreaker"
+
+[[triggered]]
+on = { event = "attacks", object = "self" }
+effect = "sequence"
+
+[[triggered.effects]]
+effect = "deal_damage"
+amount = 1
+target = "each_opponent"
+
+[[triggered.effects]]
+effect = "gain_life"
+amount = 1

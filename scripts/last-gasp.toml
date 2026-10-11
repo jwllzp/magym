@@ -1,0 +1,8 @@
+# Target creature gets -3/-3 until end of turn.
+name = "Last Gasp"
+
+[spell]
+effect = "pump"
+target = { kind = "creature" }
+power = -3
+toughness = -3

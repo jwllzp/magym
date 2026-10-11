@@ -1,0 +1,12 @@
+# Deathtouch
+# When this creature enters, target creature gets +2/+2 and gains deathtouch
+# until end of turn.
+name = "Rampart Hunter"
+
+[[triggered]]
+on = { event = "enters", object = "self" }
+effect = "pump"
+target = { kind = "creature" }
+power = 2
+toughness = 2
+keywords = ["Deathtouch"]
