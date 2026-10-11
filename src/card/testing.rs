@@ -27,5 +27,6 @@ pub fn card(name: &str, collector_number: &str, cost: &str, type_line: &str, tex
         oracle_id: "00000000-0000-0000-0000-000000000002".into(),
         image_url: None,
         oracle_text: text.into(),
+        back_face: None,
     }
 }

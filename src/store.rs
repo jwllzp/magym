@@ -90,7 +90,7 @@ fn toml_files(dir: &Path) -> Result<Vec<PathBuf>, Error> {
 mod tests {
     use super::*;
     use crate::card::testing::card;
-    use crate::card::{Ability, Keyword};
+    use crate::card::{Ability, BackFace, Color, DoubleFaced, Keyword};
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("magym-store-{name}-{}", std::process::id()));
@@ -158,6 +158,47 @@ mod tests {
         // A land's empty cost survives and stays distinct from {0} (CR 202.1b).
         assert!(read[0].mana_cost.is_empty());
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // CR 712.8: each face of a double-faced card has its own characteristics,
+    // and both survive a save.
+    #[test]
+    fn double_faced_round_trips() {
+        let back = card("Back", "1", "", "Creature — Werewolf", "Trample");
+        let mut c = card(
+            "Front",
+            "1",
+            "{2}{G}",
+            "Creature — Human Werewolf",
+            "Daybound",
+        );
+        c.back_face = Some(BackFace {
+            kind: DoubleFaced::Nonmodal,
+            name: back.name,
+            mana_cost: back.mana_cost,
+            mana_value: 3,
+            type_line: back.type_line,
+            colors: vec![Color::Green],
+            power: back.power,
+            toughness: back.toughness,
+            loyalty: None,
+            defense: None,
+            image_url: None,
+            oracle_text: back.oracle_text,
+            abilities: back.abilities,
+        });
+        let text = toml::to_string(&c).unwrap();
+        assert!(text.lines().any(|l| l == "[back_face]"), "{text}");
+        assert!(text.lines().any(|l| l == r#"kind = "nonmodal""#), "{text}");
+        assert!(
+            text.lines().any(|l| l == "[[back_face.abilities]]"),
+            "{text}"
+        );
+        assert_eq!(toml::from_str::<Card>(&text).unwrap(), c);
+
+        // Single-faced cards don't get an empty back face.
+        let single = card("Single", "2", "{G}", "Instant", "");
+        assert!(!toml::to_string(&single).unwrap().contains("back_face"));
     }
 
     #[test]

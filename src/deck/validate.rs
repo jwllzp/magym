@@ -37,7 +37,9 @@ impl Deck {
     ///
     /// Not checked yet: interchangeable names (CR 201.3b) and Limited's limit
     /// of as many copies as the product contained (CR 100.2b), which need
-    /// data the card pool doesn't have.
+    /// data the card pool doesn't have. Format legality lists (banned and
+    /// restricted cards, Standard rotation) come from the Tournament Rules,
+    /// not the Comprehensive Rules, so they aren't checked either.
     pub fn validate(&self, pool: &CardPool) -> Vec<Violation> {
         let mut violations = Vec::new();
         let mut resolve = |card: &CardRef| {

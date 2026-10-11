@@ -5,7 +5,9 @@ description: Download Magic: The Gathering card data for a specific set from Scr
 
 # Download a set / list sets
 
-This wraps the `download-database` CLI. Full reference: `docs/download.md`.
+This wraps the `download-database` CLI, which downloads cards from the
+[Scryfall API](https://scryfall.com/docs/api) and saves each set under `data/`
+(gitignored), one TOML file per card.
 Run every command from the repository root. Don't pipe the output into `head`
 or similar, because the program panics on a broken pipe. Read the full output
 instead.
@@ -68,3 +70,43 @@ instead.
   yet. Suggest close matches from `sets --all --json`.
 - `http request failed`: report it to the user. Retry once at most. Scryfall
   rate-limits heavy use.
+- When several codes are given, the sets before the failing one are already
+  written.
+
+## What a download does
+
+- `download` keeps one printing per card, so it reports fewer cards than the
+  `card_count` in `sets`, which counts every printing (alternate arts,
+  showcases).
+- Re-downloading replaces the set: every `.toml` file in `data/<code>/` is
+  deleted first. Other files there are kept.
+- Cards are **skipped**, not fatal, when the model can't represent them yet:
+  layouts other than `normal`, `transform` and `modal_dfc` (meld, split, flip,
+  adventure, `prepare`, `saga`, …), and malformed cards such as a creature face
+  without power/toughness.
+
+## Card files
+
+`data/<code>/<collector number>-<name slug>.toml`, with the number
+zero-padded to three digits so files sort in collector order, e.g.
+`data/fra/001-emrakul-the-exigent-doom.toml`. The fields mirror `Card` in
+`src/card/mod.rs`:
+
+- `mana_cost` is as printed, e.g. `"{2}{W/U}"`. `""` means no mana cost
+  (lands), which is different from `"{0}"`.
+- `colors` and `color_identity` use lowercase names: `white`, `blue`, `black`,
+  `red`, `green`.
+- `power`, `toughness`, `loyalty` and `defense` are strings, because they can be
+  `"*"` or `"1+*"`. They're left out when the card doesn't have them, as is
+  `image_url` when Scryfall has no image.
+- `[[abilities]]` has one table per ability. `kind` is `keyword`, `triggered`,
+  `activated`, `static` or `spell`. Keywords also have `keyword` (the rules
+  name, e.g. `"First Strike"`), and activated abilities have `cost` and
+  `effect`. The rest have `text`.
+- **Double-faced cards** are one file named after the front face. The top-level
+  fields are the front face, which is all the card has outside the game
+  (CR 712.8a). A `[back_face]` table holds the other side, with the same fields
+  plus `kind`, which is `nonmodal` (transforms, CR 712.2) or `modal` (either
+  face can be cast or played, CR 712.3). A nonmodal back face has the front
+  face's `mana_value` (CR 202.3b), and `color_identity` includes the back face
+  (CR 903.4d).
